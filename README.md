@@ -166,8 +166,6 @@ RL/
 ├── environment/            # Environment implementation
 │   ├── grid_world.py      # Grid World environment
 │   └── __init__.py
-├── training/               # (Deprecated - functionality moved to agents)
-│   └── __init__.py
 ├── models/                 # Saved models
 │   ├── *.pth             # DQN models
 │   └── *.pkl             # Q-Table models
@@ -175,71 +173,3 @@ RL/
 ├── README.md              # This file
 └── requirements.txt       # Dependencies
 ```
-
-## Performance Tips
-
-### For Q-Table Agents:
-- Use smaller grids (5x5 to 6x6) for optimal performance
-- Higher learning rate (0.1) works well
-- Fast convergence on simple layouts
-- Watch Q-table size growth during training
-
-### For DQN Agents:
-- Better for larger grids (7x7+) or complex environments
-- Lower learning rate (0.001) prevents instability
-- Requires more episodes but handles complexity better
-- Monitor loss curves and epsilon decay
-
-### Environment Recommendations:
-- **Fixed layout**: Use for consistent training and comparison
-- **Random layout**: Use for generalization and robustness testing
-- **Single reward**: Clearer learning objective for beginners
-- **Multiple rewards**: More complex strategies and longer episodes
-
-## Extending the Framework
-
-To add a new agent type:
-
-1. Create a new class inheriting from `BaseAgent`
-2. Implement abstract methods: `act()`, `update()`, `save()`, `load()`, `get_stats()`, `_plot_agent_specific()`
-3. Add agent-specific logic and parameters
-4. Import in `agents/__init__.py`
-5. Update `main.py` to support the new agent type
-
-Example:
-```python
-from agents.base_agent import BaseAgent
-
-class SARSAAgent(BaseAgent):
-    def act(self, state, training=True):
-        # Implementation
-        pass
-    
-    def update(self, state, action, reward, next_state, done):
-        # SARSA update logic
-        pass
-    # ... other required methods
-```
-
-## Troubleshooting
-
-**Training not converging?**
-- Try adjusting learning rate
-- Increase training episodes
-- Check epsilon decay settings
-- Use fixed layout for debugging
-
-**Q-Table too large?**
-- Reduce grid size
-- Fewer rewards/enemies
-- Consider DQN for larger spaces
-
-**DQN unstable?**
-- Lower learning rate
-- Increase replay buffer size
-- Adjust target network update frequency
-- More training episodes
-
-## License
-
-MIT License - feel free to use and modify for your projects. 
