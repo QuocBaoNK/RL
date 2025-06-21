@@ -17,6 +17,7 @@ class GridWorldEnv(gym.Env):
                  num_obstacles: int = 8,  # Thêm obstacles
                  render_mode: Optional[str] = None,
                  fixed_layout: bool = True,
+                 use_reward_shaping: bool = True,  # Thêm tùy chọn reward shaping
                  fixed_agent_pos: Optional[Tuple[int, int]] = None,
                  fixed_rewards: Optional[List[Tuple[int, int]]] = None,
                  fixed_enemies: Optional[List[Tuple[int, int]]] = None,
@@ -78,6 +79,10 @@ class GridWorldEnv(gym.Env):
         self.collected_rewards = 0
         self.max_steps = grid_size * grid_size * 3
         self.current_step = 0
+        
+        # Cho potential-based reward shaping
+        self.previous_potential = 0.0
+        self.use_reward_shaping = use_reward_shaping  # Flag để bật/tắt reward shaping
         
     def _get_obs(self) -> np.ndarray:
         """Create observation from current state using distance vectors instead of full grids"""
@@ -153,21 +158,52 @@ class GridWorldEnv(gym.Env):
         
         return distances
     
-    def _calculate_distance_reward(self) -> float:
-        """Tính reward dựa trên khoảng cách đến enemy - càng gần thì điểm càng cao"""
-        if not self.enemies:
+    def _calculate_reward_shaping(self) -> float:
+        """
+        Tính reward shaping dựa trên khoảng cách đến rewards - càng gần reward càng cao
+        Sử dụng potential-based reward shaping để đảm bảo optimal policy không đổi
+        """
+        if not self.rewards:
             return 0.0
         
-        # Tìm khoảng cách nhỏ nhất đến enemy
-        min_distance = float('inf')
-        for enemy_pos in self.enemies:
-            distance = abs(self.agent_pos[0] - enemy_pos[0]) + abs(self.agent_pos[1] - enemy_pos[1])  # Manhattan distance
-            min_distance = min(min_distance, distance)
+        # Tìm khoảng cách nhỏ nhất đến reward gần nhất
+        min_distance_to_reward = float('inf')
+        for reward_pos in self.rewards:
+            # Sử dụng Manhattan distance
+            distance = abs(self.agent_pos[0] - reward_pos[0]) + abs(self.agent_pos[1] - reward_pos[1])
+            min_distance_to_reward = min(min_distance_to_reward, distance)
         
-        # Reward cao hơn khi gần enemy (khoảng cách nhỏ)
-        # Sử dụng công thức: reward = max_distance - current_distance
-        max_possible_distance = (self.grid_size - 1) * 2  # Khoảng cách max trong grid
-        distance_reward = (max_possible_distance - min_distance) / max_possible_distance * 0.1
+        # Potential-based reward shaping: Φ(s) = -distance_to_nearest_reward
+        # Reward shaping: R'(s,a,s') = R(s,a,s') + γΦ(s') - Φ(s)
+        # Ở đây ta chỉ trả về potential function để tính trong step()
+        max_possible_distance = (self.grid_size - 1) * 2  # Max Manhattan distance
+        
+        # Normalize và scale potential function
+        potential = -(min_distance_to_reward / max_possible_distance)
+        
+        return potential
+    
+    def _calculate_distance_reward(self) -> float:
+        """
+        Tính immediate reward dựa trên việc tiến gần hơn đến reward
+        Đây là simplified version, không dùng potential-based shaping
+        """
+        if not self.rewards:
+            return 0.0
+        
+        # Tìm khoảng cách nhỏ nhất đến reward gần nhất
+        min_distance_to_reward = float('inf')
+        for reward_pos in self.rewards:
+            distance = abs(self.agent_pos[0] - reward_pos[0]) + abs(self.agent_pos[1] - reward_pos[1])
+            min_distance_to_reward = min(min_distance_to_reward, distance)
+        
+        # Reward cao hơn khi gần reward (khoảng cách nhỏ)
+        max_possible_distance = (self.grid_size - 1) * 2
+        
+        # Tạo reward gradient hướng về phần thưởng
+        # Sử dụng exponential decay để tạo gradient mạnh hơn khi gần
+        normalized_distance = min_distance_to_reward / max_possible_distance
+        distance_reward = 0.5 * (1.0 - normalized_distance)  # 0.0 to 0.5 range
         
         return distance_reward
     
@@ -236,6 +272,10 @@ class GridWorldEnv(gym.Env):
                 if pos != self.agent_pos and pos not in self.rewards and pos not in self.obstacles:
                     self.enemies.add(pos)
         
+        # Tính potential ban đầu cho reward shaping
+        if self.use_reward_shaping:
+            self.previous_potential = self._calculate_reward_shaping()
+        
         observation = self._get_obs()
         info = self._get_info()
         
@@ -282,9 +322,18 @@ class GridWorldEnv(gym.Env):
             else:
                 reward -= 0.05  # Penalty thông thường cho va chạm với tường
         
-        # Thêm reward dựa trên khoảng cách đến enemy - càng gần thì điểm càng cao
-        distance_reward = self._calculate_distance_reward()
-        reward += distance_reward
+        # Thêm reward shaping để giúp agent học đường đi tối ưu
+        if self.use_reward_shaping:
+            # Potential-based reward shaping: R'(s,a,s') = R(s,a,s') + γΦ(s') - Φ(s)
+            current_potential = self._calculate_reward_shaping()
+            gamma = 0.99  # Discount factor, có thể truyền từ tham số
+            shaping_reward = gamma * current_potential - self.previous_potential
+            reward += shaping_reward
+            self.previous_potential = current_potential
+        else:
+            # Sử dụng simple distance reward (phương pháp cũ)
+            distance_reward = self._calculate_distance_reward()
+            reward += distance_reward
         
         if self.agent_pos in self.rewards:
             self.rewards.remove(self.agent_pos)

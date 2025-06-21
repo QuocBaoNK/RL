@@ -67,73 +67,103 @@ class BaseAgent(ABC):
               save_dir: str = "models",
               save_interval: int = 100,
               print_interval: int = 50) -> Tuple[List[float], List[int]]:
-        """Train the agent in the environment"""
+        """
+        Train the agent using the provided environment configuration
         
-        if env_config is None:
-            env_config = {
-                "grid_size": 8,
-                "num_rewards": 2,
-                "num_enemies": 4,
-                "num_obstacles": 8,
-                "render_mode": None,
-                "fixed_layout": True
-            }
+        Args:
+            env_config: Dictionary containing environment configuration
+            episodes: Number of training episodes
+            max_steps_per_episode: Maximum steps per episode
+            save_dir: Directory to save models
+            save_interval: Save model every N episodes
+            print_interval: Print progress every N episodes
         
-        # Create environment based on config
+        Returns:
+            Tuple of (episode_rewards, episode_lengths)
+        """
+        print(f"🚀 Starting training for {episodes} episodes...")
+        
+        # Create environment using the config
         env = self._create_environment(env_config)
         
-        os.makedirs(save_dir, exist_ok=True)
+        # Reset tracking variables
+        self.episode_rewards = []
+        self.episode_lengths = []
         
-        print(f"Training {self.__class__.__name__} for {episodes} episodes...")
-        print(f"Environment: {env_config.get('grid_size', 'Unknown')}x{env_config.get('grid_size', 'Unknown')} {'Fixed' if env_config.get('fixed_layout', False) else 'Random'} layout")
-        print("-" * 50)
+        # Create save directory
+        os.makedirs(save_dir, exist_ok=True)
         
         start_time = time.time()
         
         for episode in range(episodes):
-            state, _ = env.reset()
-            total_reward = 0
-            steps = 0
+            state, info = env.reset()
+            episode_reward = 0
+            episode_length = 0
             
             for step in range(max_steps_per_episode):
+                # Choose action
                 action = self.act(state, training=True)
+                
+                # Take step
                 next_state, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
                 
-                self.update(state, action, reward, next_state, terminated)
+                # Update agent
+                loss = self.update(state, action, reward, next_state, done)
                 
+                # Update tracking
+                episode_reward += reward
+                episode_length += 1
                 state = next_state
-                total_reward += reward
-                steps += 1
                 
-                if terminated or truncated:
+                if done:
                     break
             
-            self.episode_rewards.append(total_reward)
-            self.episode_lengths.append(steps)
+            # Update epsilon
+            self.update_epsilon()
             
+            # Store episode results
+            self.episode_rewards.append(episode_reward)
+            self.episode_lengths.append(episode_length)
+            
+            # Print progress
             if (episode + 1) % print_interval == 0:
-                self._print_progress(episode + 1, episodes, print_interval, time.time() - start_time)
+                avg_reward = np.mean(self.episode_rewards[-print_interval:])
+                avg_length = np.mean(self.episode_lengths[-print_interval:])
+                print(f"Episode {episode + 1}/{episodes} | "
+                      f"Avg Reward: {avg_reward:.2f} | "
+                      f"Avg Length: {avg_length:.1f} | "
+                      f"Epsilon: {self.epsilon:.3f}")
             
+            # Save model periodically
             if (episode + 1) % save_interval == 0:
-                env_type = env_config.get('env_type', 'gridworld')
-                filename = f"{env_type}_{self.__class__.__name__.lower()}_episode_{episode + 1}.pth"
-                self.save(os.path.join(save_dir, filename))
+                model_path = f"{save_dir}/{env_config.get('env_type', 'unknown')}_dqnagent_ep{episode + 1}.pth"
+                self.save(model_path)
+                print(f"💾 Model saved: {model_path}")
         
+        # Record training time
         self.training_time = time.time() - start_time
-        print(f"\nTraining completed! Time: {self.training_time:.1f}s")
         
-        # Save final model
-        env_type = env_config.get('env_type', 'gridworld')
-        final_filename = f"{env_type}_{self.__class__.__name__.lower()}_final.pth"
-        self.save(os.path.join(save_dir, final_filename))
-        print(f"Model saved: {os.path.join(save_dir, final_filename)}")
+        print(f"✅ Training completed in {self.training_time:.2f} seconds")
+        print(f"📊 Final Stats - Avg Reward: {np.mean(self.episode_rewards[-100:]):.2f}")
         
         env.close()
         return self.episode_rewards, self.episode_lengths
     
     def _create_environment(self, env_config: dict):
         """Create environment based on config - can be overridden for different env types"""
-        return GridWorldEnv(**env_config)
+        from environment import GridWorldEnv, MovingEnemyGridWorldEnv
+        
+        # Remove env_type from config before passing to environment constructor
+        env_config_copy = env_config.copy()
+        env_type = env_config_copy.pop('env_type', 'gridworld')
+        
+        if env_type == 'gridworld':
+            return GridWorldEnv(**env_config_copy)
+        elif env_type == 'movingenemyworld':
+            return MovingEnemyGridWorldEnv(**env_config_copy)
+        else:
+            raise ValueError(f"Unknown environment type: {env_type}")
     
     def evaluate(self,
                  env_config: dict = None,
@@ -152,103 +182,95 @@ class BaseAgent(ABC):
                 "fixed_layout": True
             }
         
-        env = self._create_environment(env_config)
-        total_rewards = []
-        successes = 0
+        # Create environment for evaluation
+        eval_env_config = env_config.copy()
+        if render:
+            eval_env_config["render_mode"] = "human"
+        else:
+            eval_env_config["render_mode"] = None
+            
+        env = self._create_environment(eval_env_config)
         
-        print(f"Evaluating {self.__class__.__name__} for {episodes} episodes...")
+        total_rewards = []
+        successful_episodes = 0
+        
+        print(f"🧪 Evaluating agent for {episodes} episodes...")
         
         for episode in range(episodes):
-            state, _ = env.reset()
-            total_reward = 0
-            steps = 0
+            state, info = env.reset()
+            episode_reward = 0
             
-            for _ in range(max_steps):
+            for step in range(max_steps):
+                # Use greedy policy (no exploration)
                 action = self.act(state, training=False)
                 state, reward, terminated, truncated, info = env.step(action)
-                total_reward += reward
-                steps += 1
+                episode_reward += reward
                 
                 if render:
-                    time.sleep(0.1)
+                    env.render()
+                    time.sleep(0.1)  # Small delay for visualization
                 
                 if terminated or truncated:
-                    if info.get('remaining_rewards', 1) == 0:
-                        successes += 1
+                    if info.get('collected_rewards', 0) == env.num_rewards:
+                        successful_episodes += 1
                     break
             
-            total_rewards.append(total_reward)
-            print(f"Episode {episode + 1}: Reward={total_reward:.2f}, Steps={steps}")
-        
-        avg_reward = np.mean(total_rewards)
-        success_rate = successes / episodes
-        
-        print(f"\nResults:")
-        print(f"  Average Reward: {avg_reward:.2f}")
-        print(f"  Success Rate: {success_rate:.2%}")
+            total_rewards.append(episode_reward)
+            print(f"Episode {episode + 1}: Reward = {episode_reward:.2f}, "
+                  f"Success = {'✅' if info.get('collected_rewards', 0) == env.num_rewards else '❌'}")
         
         env.close()
+        
+        avg_reward = np.mean(total_rewards)
+        success_rate = successful_episodes / episodes
+        
         return avg_reward, success_rate
     
-    def plot_training_progress(self, save_path: Optional[str] = None):
+    def plot_training_progress(self, save_path: str = None):
         """Plot training progress"""
-        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+        if not self.episode_rewards:
+            print("No training data to plot!")
+            return
         
-        # Episode rewards
-        axes[0, 0].plot(self.episode_rewards, alpha=0.6)
-        if len(self.episode_rewards) > 50:
-            window = min(50, len(self.episode_rewards) // 10)
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+        
+        # Plot episode rewards
+        ax1.plot(self.episode_rewards, alpha=0.7, label='Episode Reward')
+        
+        # Plot moving average
+        window_size = min(100, len(self.episode_rewards) // 10)
+        if window_size > 1:
             moving_avg = np.convolve(self.episode_rewards, 
-                                   np.ones(window)/window, mode='valid')
-            axes[0, 0].plot(range(window-1, len(self.episode_rewards)), 
-                           moving_avg, 'r-', linewidth=2)
-        axes[0, 0].set_title('Episode Rewards')
-        axes[0, 0].set_xlabel('Episode')
-        axes[0, 0].set_ylabel('Total Reward')
-        axes[0, 0].grid(True)
+                                   np.ones(window_size)/window_size, mode='valid')
+            ax1.plot(range(window_size-1, len(self.episode_rewards)), 
+                    moving_avg, 'r-', linewidth=2, label=f'Moving Average ({window_size})')
         
-        # Episode lengths
-        axes[0, 1].plot(self.episode_lengths, alpha=0.6)
-        if len(self.episode_lengths) > 50:
-            window = min(50, len(self.episode_lengths) // 10)
-            moving_avg = np.convolve(self.episode_lengths, 
-                                   np.ones(window)/window, mode='valid')
-            axes[0, 1].plot(range(window-1, len(self.episode_lengths)), 
-                           moving_avg, 'r-', linewidth=2)
-        axes[0, 1].set_title('Episode Lengths')
-        axes[0, 1].set_xlabel('Episode')
-        axes[0, 1].set_ylabel('Steps')
-        axes[0, 1].grid(True)
+        ax1.set_xlabel('Episode')
+        ax1.set_ylabel('Reward')
+        ax1.set_title('Training Rewards')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
         
-        # Agent-specific plots
-        self._plot_agent_specific(axes[1, 0], axes[1, 1])
+        # Plot episode lengths
+        ax2.plot(self.episode_lengths, alpha=0.7, color='green', label='Episode Length')
+        
+        # Plot moving average for lengths
+        if window_size > 1:
+            moving_avg_length = np.convolve(self.episode_lengths, 
+                                          np.ones(window_size)/window_size, mode='valid')
+            ax2.plot(range(window_size-1, len(self.episode_lengths)), 
+                    moving_avg_length, 'r-', linewidth=2, label=f'Moving Average ({window_size})')
+        
+        ax2.set_xlabel('Episode')
+        ax2.set_ylabel('Steps')
+        ax2.set_title('Episode Lengths')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
         
         plt.tight_layout()
         
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.show()
-    
-    def _print_progress(self, episode: int, total_episodes: int, 
-                       print_interval: int, elapsed_time: float):
-        """Print training progress"""
-        avg_reward = np.mean(self.episode_rewards[-print_interval:])
-        avg_length = np.mean(self.episode_lengths[-print_interval:])
-        stats = self.get_stats()
+            print(f"📊 Training plot saved: {save_path}")
         
-        print(f"Episode {episode}/{total_episodes}")
-        print(f"  Avg Reward: {avg_reward:.2f}")
-        print(f"  Avg Length: {avg_length:.1f}")
-        print(f"  Epsilon: {self.epsilon:.3f}")
-        
-        for key, value in stats.items():
-            if key not in ['epsilon']:
-                print(f"  {key.replace('_', ' ').title()}: {value}")
-        
-        print(f"  Time: {elapsed_time:.1f}s")
-        print("-" * 30)
-    
-    @abstractmethod
-    def _plot_agent_specific(self, ax1, ax2):
-        """Plot agent-specific metrics (to be implemented by subclasses)"""
-        pass 
+        plt.show() 

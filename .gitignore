@@ -195,3 +195,6 @@ Thumbs.db
 temp/
 tmp/
 
+*.md 
+!README.md
+visualization_scripts/
