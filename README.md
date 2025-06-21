@@ -1,36 +1,25 @@
-# Grid World Reinforcement Learning
+# Multi-Environment Deep Reinforcement Learning Framework
 
-Simplified Grid World environment for training and testing reinforcement learning agents. Features a clean object-oriented architecture with training functionality integrated directly into agent classes.
+A flexible Deep RL framework supporting multiple environment types with specialized DQN agents. Each environment has its own corresponding DQN agent optimized for that specific domain.
 
-## Architecture Highlights
+## 🧠 Architecture Overview
 
-- **Base Agent Class**: Abstract base class providing common training, evaluation, and plotting functionality
-- **Integrated Training**: Each agent contains its own training logic, eliminating the need for separate trainer classes
-- **Unified Interface**: Both DQN and Q-Table agents share the same API for training and evaluation
-- **Minimal Code Duplication**: Common functionality is inherited from BaseAgent
+- **DQN-Only Framework**: All agents use Deep Q-Networks for scalability
+- **Multi-Environment Support**: Extensible framework for various RL environments
+- **Specialized Agents**: Each environment type has its own optimized DQN agent
+- **Clean Factory Pattern**: Environment and agent creation through factory functions
+- **Unified Interface**: Consistent API across all environment types
 
-## Features
+## 🌍 Supported Environments
 
-- **5x5 Fixed Layout**: Default environment with strategic placement of rewards and enemies
-- **Two Agent Types**: DQN (neural network) and Q-Table (tabular) implementations
-- **Clean CLI Interface**: Command-line tool with comprehensive argument parsing
-- **Training & Evaluation**: Built-in training pipelines with visualization and metrics
-- **Human Play Mode**: Interactive mode for manual testing and exploration
+### GridWorld Environment
+- **Type**: `gridworld`
+- **Description**: 2D grid navigation with rewards, enemies, and obstacles
+- **Default Config**: 8x8 grid, 2 rewards, 4 enemies, 8 obstacles
+- **State Space**: Agent position + grid encodings + distance vectors
+- **Action Space**: 4 directions (UP, RIGHT, DOWN, LEFT)
 
-## Default Environment
-
-The default configuration uses a **5x5 grid** with a **fixed layout**:
-- **Agent Start**: Top-left corner (0,0)
-- **1 Reward**: Bottom-right corner (4,4) - goal to reach
-- **3 Enemies**: Strategic positions at (2,1), (1,3), (3,2) - obstacles to avoid
-
-This configuration provides:
-- **Clear objective**: Single reward makes the goal obvious
-- **Strategic challenge**: Multiple enemies require careful navigation
-- **Consistent training**: Fixed layout ensures reproducible results
-- **Balanced difficulty**: Manageable for both learning algorithms
-
-## Quick Start
+## 🚀 Quick Start
 
 ### Installation
 ```bash
@@ -39,137 +28,227 @@ pip install -r requirements.txt
 
 ### Basic Usage
 
-#### Train Q-Table Agent (Recommended for 5x5)
-```bash
-python main.py train --agent-type qtable --episodes 1000
-```
-
 #### Train DQN Agent
 ```bash
-python main.py train --agent-type dqn --episodes 1000
+python main.py train --env-type gridworld --episodes 1000
 ```
 
 #### Test Trained Agent
 ```bash
-python main.py test --model models/qtableagent_final.pkl --render
+python main.py test --env-type gridworld --model models/gridworld_dqnagent_final.pth --render
 ```
 
 #### Human Play Mode
 ```bash
-python main.py play
+python main.py play --env-type gridworld
 ```
 
-#### Compare Agents
-```bash
-python main.py compare
-```
-
-## Architecture Overview
+## 🏗️ Framework Architecture
 
 ### Class Hierarchy
 ```
 BaseAgent (abstract)
-├── QTableAgent
-└── DQNAgent
+└── DQNAgent (configurable for different environments)
+
+Environment Factory
+├── GridWorldEnv
+└── [Future environments...]
 ```
 
-### BaseAgent Methods
-- `train()`: Complete training pipeline with environment interaction
-- `evaluate()`: Test agent performance with metrics
-- `plot_training_progress()`: Visualize training metrics
-- `act()`: Choose action (abstract - implemented by subclasses)
-- `update()`: Update agent based on experience (abstract)
-- `save()/load()`: Model persistence (abstract)
+### Agent Factory Pattern
+```python
+def create_agent(env_type: str, args) -> DQNAgent:
+    """Factory function to create DQN agent based on environment type"""
+    state_size = get_state_size(env_type, args)
+    
+    if env_type == "gridworld":
+        return DQNAgent(state_size=state_size, ...)
+    # Add more environment types here
+```
 
-### Agent-Specific Features
+## 🧮 DQN Agent Features
 
-**QTableAgent**:
-- Dictionary-based Q-value storage
-- State representation as string keys
-- Q-Table size tracking and visualization
-- Direct Q-learning updates
+### Configurable Architecture
+- **Hidden Layers**: Customizable network depth and width
+- **State Processing**: Environment-specific input handling
+- **Experience Replay**: Efficient memory buffer
+- **Target Networks**: Stable learning with periodic updates
 
-**DQNAgent**:
-- Neural network function approximation
-- Experience replay buffer
-- Target network for stability
-- Gradient-based updates
+### Training Features
+- **Epsilon-Greedy**: Configurable exploration strategy
+- **Gradient Clipping**: Stable gradient updates
+- **Periodic Saving**: Model checkpoints during training
+- **Rich Metrics**: Loss tracking, epsilon decay, buffer monitoring
 
-## Command Line Interface
+### Evaluation & Visualization
+- **Performance Metrics**: Success rate, average rewards
+- **Training Plots**: Rewards, episode lengths, loss curves
+- **Model Persistence**: Complete state saving/loading
 
-### Available Commands
+## 📊 GridWorld Environment Details
 
-- `play` - Human control mode (W/S/A/D keys)
-- `train` - Train RL agent (DQN or Q-Table)
-- `test` - Test trained agent
-- `compare` - Compare DQN vs Q-Table performance
+### Default Configuration (8x8)
+- **Agent Start**: Top-left corner (0,0)
+- **Rewards**: 2 rewards at strategic positions
+- **Enemies**: 4 enemies to avoid
+- **Obstacles**: 8 static obstacles blocking movement
 
-### Common Arguments
+### Reward System
+- **Step Penalty**: -0.01 (efficiency incentive)
+- **Reward Collection**: +10.0
+- **Mission Complete**: +50.0 (all rewards collected)
+- **Enemy Collision**: -20.0
+- **Distance Reward**: Bonus for strategic positioning near enemies
+- **Collision Penalty**: -0.05 (walls) / -0.1 (obstacles)
 
-- `--grid-size` - Grid size (default: 5)
-- `--num-rewards` - Number of rewards (default: 1)
-- `--num-enemies` - Number of enemies (default: 3)
-- `--fixed-layout` - Use fixed layout (default: True)
-- `--random-layout` - Use random layout instead
-- `--max-steps` - Max steps per episode (default: 75)
+### State Representation
+```
+Observation Vector Components (Compact Version):
+├── Agent Position (2D)
+├── Distance Vectors to Rewards (num_rewards × 2) 
+├── Distance Vectors to Enemies (num_enemies × 2)
+└── Distance to Nearest Obstacles in 8 Directions (8D)
 
-### Training Arguments
+Total Size: 2 + num_rewards×2 + num_enemies×2 + 8
+Default (2 rewards, 4 enemies): 2 + 4 + 8 + 8 = 22 dimensions
+```
 
-- `--agent-type {dqn,qtable}` - Agent type (default: qtable)
-- `--episodes` - Training episodes (default: 1000)
-- `--learning-rate` - Learning rate (0.1 for Q-Table, 0.001 for DQN)
-- `--epsilon` - Initial exploration rate (default: 1.0)
-- `--gamma` - Discount factor (default: 0.99)
+## 🛠️ Command Line Interface
+
+### Global Options
+- `--env-type {gridworld}` - Environment type selection
+- `--eval-episodes N` - Episodes for evaluation
+
+### Training Mode
+```bash
+python main.py train [options]
+```
+
+**Key Arguments:**
+- `--episodes N` - Training episodes (default: 1000)
+- `--learning-rate F` - Learning rate (default: 0.001)
+- `--epsilon F` - Initial exploration rate (default: 1.0)
+- `--buffer-size N` - Replay buffer size (default: 10000)
+- `--batch-size N` - Training batch size (default: 64)
 - `--plot` - Generate training plots
 - `--evaluate` - Evaluate after training
 
-## Agent Comparison
-
-| Feature | Q-Table | DQN |
-|---------|---------|-----|
-| **Type** | Tabular | Neural Network |
-| **Memory** | Dictionary | Experience Replay |
-| **Learning Rate** | 0.1 | 0.001 |
-| **Best for** | Small grids (≤6x6) | Large grids (>6x6) |
-| **Training Speed** | Fast | Moderate |
-| **Convergence** | Quick on simple tasks | Stable on complex tasks |
-| **File Format** | .pkl | .pth |
-
-## Code Example
-
-```python
-from agents import QTableAgent, DQNAgent
-from environment import GridWorldEnv
-
-# Create and train Q-Table agent
-agent = QTableAgent(lr=0.1, gamma=0.99)
-rewards, lengths = agent.train(episodes=1000)
-agent.plot_training_progress("qtable_progress.png")
-
-# Evaluate trained agent
-avg_reward, success_rate = agent.evaluate(episodes=10, render=True)
-
-# Save/Load
-agent.save("models/my_qtable.pkl")
-agent.load("models/my_qtable.pkl")
+### Testing Mode
+```bash
+python main.py test --model path/to/model.pth [options]
 ```
 
-## File Structure
+### Play Mode (Human Control)
+```bash
+python main.py play [options]
+```
+**Controls:** W/S/A/D or Arrow Keys, ESC to quit, R to reset
+
+## 📁 Project Structure
 
 ```
 RL/
-├── agents/                 # Agent implementations
-│   ├── base_agent.py      # Abstract base class with training logic
-│   ├── dqn_agent.py       # Deep Q-Network agent
-│   ├── q_table_agent.py   # Q-Table agent
+├── agents/                    # DQN agent implementations
+│   ├── base_agent.py         # Abstract base class
+│   ├── dqn_agent.py          # Deep Q-Network agent
 │   └── __init__.py
-├── environment/            # Environment implementation
-│   ├── grid_world.py      # Grid World environment
+├── environment/               # Environment implementations
+│   ├── grid_world.py         # GridWorld environment
 │   └── __init__.py
-├── models/                 # Saved models
-│   ├── *.pth             # DQN models
-│   └── *.pkl             # Q-Table models
-├── main.py                # Main CLI interface
-├── README.md              # This file
-└── requirements.txt       # Dependencies
+├── main.py                   # CLI interface with factory patterns
+├── models/                   # Saved models directory
+│   └── [env_type]_dqnagent_final.pth
+├── README.md                 # This file
+└── requirements.txt          # Dependencies
 ```
+
+## 🔧 Adding New Environments
+
+### 1. Create Environment Class
+```python
+# environment/new_env.py
+import gymnasium as gym
+
+class NewEnv(gym.Env):
+    def __init__(self, ...):
+        # Environment-specific initialization
+        pass
+    
+    def step(self, action):
+        # Environment step logic
+        pass
+    
+    def reset(self):
+        # Reset environment
+        pass
+```
+
+### 2. Update Factory Functions
+```python
+# main.py
+def create_environment(args):
+    if args.env_type == "newenv":
+        return NewEnv(...)
+    # ...
+
+def get_state_size(env_type: str, args) -> int:
+    if env_type == "newenv":
+        return calculate_new_env_state_size(args)
+    # ...
+
+def create_agent(env_type: str, args) -> DQNAgent:
+    if env_type == "newenv":
+        return DQNAgent(
+            state_size=get_state_size(env_type, args),
+            hidden_sizes=[256, 128],  # Custom architecture
+            ...
+        )
+    # ...
+```
+
+### 3. Add CLI Arguments
+```python
+# main.py - Add environment-specific arguments
+parser.add_argument('--newenv-param', ...)
+```
+
+## 📈 Performance Optimization
+
+### Network Architecture
+- **Adaptive Hidden Sizes**: Configure based on state complexity
+- **GPU Support**: Automatic CUDA detection and usage
+- **Gradient Clipping**: Stable training with large networks
+
+### Training Efficiency
+- **Experience Replay**: Sample efficiency through memory replay
+- **Target Networks**: Stable Q-learning with periodic updates
+- **Batch Processing**: Efficient GPU utilization
+
+### Compact State Representation
+- **Distance Vectors**: Use relative positions instead of full grids
+- **Directional Obstacles**: 8-direction obstacle sensing vs full grid
+- **Dramatic Size Reduction**: From 202 to 22 dimensions (90% reduction)
+- **Faster Training**: Smaller networks, faster forward/backward passes
+
+## 🎯 Future Roadmap
+
+- [ ] **Classic Control**: CartPole, MountainCar, Pendulum
+- [ ] **Atari Games**: Visual RL with CNN-based DQNs
+- [ ] **Continuous Control**: DDPG/TD3 for continuous action spaces
+- [ ] **Multi-Agent**: Cooperative and competitive scenarios
+- [ ] **Custom Domains**: Domain-specific environments
+
+## 🔬 Research Extensions
+
+- **Double DQN**: Reduce overestimation bias
+- **Dueling DQN**: Separate value and advantage streams
+- **Prioritized Experience Replay**: Sample important transitions
+- **Rainbow DQN**: Combine multiple DQN improvements
+
+## 💡 Design Philosophy
+
+1. **Modularity**: Clean separation between environments and agents
+2. **Extensibility**: Easy addition of new environments and agent types
+3. **Consistency**: Unified interface across all components
+4. **Scalability**: Deep learning approach suitable for complex domains
+5. **Reproducibility**: Fixed seeds and deterministic training

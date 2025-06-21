@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Simplified Grid World RL Main Script
-Supports training, testing, and playing with DQN and Q-Table agents in Grid World environment
-Default: 5x5 fixed layout with 1 reward and 3 enemies
+Multi-Environment Deep RL Framework
+Supports multiple environment types with corresponding DQN agents
+Each environment has its own specialized DQN agent with custom input processing
 """
 
 import argparse
@@ -10,25 +10,19 @@ import os
 import sys
 import pygame
 import time
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from environment import GridWorldEnv
-from agents import DQNAgent, QTableAgent
+from agents import DQNAgent
 
 
 def play_human(args):
-    """Human control mode"""
+    """Human control mode for any environment"""
     print("🎮 Human Control Mode")
     print("Controls: W/S/A/D or Arrow Keys, ESC to quit")
-    print(f"Environment: {args.grid_size}x{args.grid_size} {'Fixed' if args.fixed_layout else 'Random'} Layout")
     
-    env = GridWorldEnv(
-        grid_size=args.grid_size,
-        num_rewards=args.num_rewards,
-        num_enemies=args.num_enemies,
-        render_mode="human",
-        fixed_layout=args.fixed_layout
-    )
+    # Create environment based on type
+    env = create_environment(args)
     
     state, info = env.reset()
     env.print_layout()
@@ -81,27 +75,38 @@ def play_human(args):
     pygame.quit()
 
 
-def train_agent(args):
-    """Train a new agent (DQN or Q-Table)"""
-    print(f"🤖 Training {args.agent_type.upper()} Agent for {args.episodes} episodes")
-    print(f"Environment: {args.grid_size}x{args.grid_size} {'Fixed' if args.fixed_layout else 'Random'} Layout")
+def create_environment(args) -> Any:
+    """Factory function to create environment based on type"""
+    if args.env_type == "gridworld":
+        return GridWorldEnv(
+            grid_size=args.grid_size,
+            num_rewards=args.num_rewards,
+            num_enemies=args.num_enemies,
+            num_obstacles=args.num_obstacles,
+            render_mode="human" if hasattr(args, 'render') and args.render else None,
+            fixed_layout=args.fixed_layout
+        )
+    else:
+        raise ValueError(f"Unknown environment type: {args.env_type}")
+
+
+def get_state_size(env_type: str, args) -> int:
+    """Get state size for DQN based on environment type"""
+    if env_type == "gridworld":
+        # New compact representation:
+        # agent_pos (2) + reward_vectors (num_rewards * 2) + enemy_vectors (num_enemies * 2) + obstacle_distances (8)
+        return 2 + args.num_rewards * 2 + args.num_enemies * 2 + 8
+    else:
+        raise ValueError(f"Unknown environment type: {env_type}")
+
+
+def create_agent(env_type: str, args) -> DQNAgent:
+    """Factory function to create DQN agent based on environment type"""
+    state_size = get_state_size(env_type, args)
     
-    env_config = {
-        "grid_size": args.grid_size,
-        "num_rewards": args.num_rewards,
-        "num_enemies": args.num_enemies,
-        "render_mode": None,
-        "fixed_layout": args.fixed_layout
-    }
-    
-    temp_env = GridWorldEnv(**env_config)
-    temp_env.reset()
-    temp_env.print_layout()
-    temp_env.close()
-    
-    if args.agent_type == "dqn":
-        state_size = 2 + 2 * args.grid_size * args.grid_size
-        agent = DQNAgent(
+    if env_type == "gridworld":
+        # GridWorld-specific DQN agent
+        return DQNAgent(
             state_size=state_size,
             lr=args.learning_rate,
             gamma=args.gamma,
@@ -113,14 +118,27 @@ def train_agent(args):
             target_update=args.target_update
         )
     else:
-        agent = QTableAgent(
-            lr=args.learning_rate,
-            gamma=args.gamma,
-            epsilon=args.epsilon,
-            epsilon_min=args.epsilon_min,
-            epsilon_decay=args.epsilon_decay
-        )
+        raise ValueError(f"Unknown environment type: {env_type}")
+
+
+def train_agent(args):
+    """Train a DQN agent for specified environment"""
+    print(f"🤖 Training DQN Agent for {args.env_type.upper()} environment")
+    print(f"Episodes: {args.episodes}")
     
+    # Create environment and get config
+    env_config = get_env_config(args)
+    
+    # Show environment layout
+    temp_env = create_environment(args)
+    temp_env.reset()
+    temp_env.print_layout()
+    temp_env.close()
+    
+    # Create agent
+    agent = create_agent(args.env_type, args)
+    
+    # Train agent
     episode_rewards, episode_lengths = agent.train(
         env_config=env_config,
         episodes=args.episodes,
@@ -131,14 +149,12 @@ def train_agent(args):
     
     print("✅ Training completed!")
     
+    # Plot training progress
     if args.plot:
-        plot_name = f"{args.agent_type}_training_progress.png"
+        plot_name = f"{args.env_type}_dqn_training_progress.png"
         agent.plot_training_progress(plot_name)
     
-    if args.agent_type == "qtable" and hasattr(agent, 'print_q_table_sample'):
-        print("\n" + "="*50)
-        agent.print_q_table_sample(5)
-    
+    # Evaluate if requested
     if args.evaluate:
         print("\n🧪 Evaluating trained agent...")
         avg_reward, success_rate = agent.evaluate(
@@ -149,32 +165,38 @@ def train_agent(args):
         )
 
 
+def get_env_config(args) -> Dict[str, Any]:
+    """Get environment configuration based on type"""
+    if args.env_type == "gridworld":
+        return {
+            "grid_size": args.grid_size,
+            "num_rewards": args.num_rewards,
+            "num_enemies": args.num_enemies,
+            "num_obstacles": args.num_obstacles,
+            "render_mode": None,
+            "fixed_layout": args.fixed_layout
+        }
+    else:
+        raise ValueError(f"Unknown environment type: {args.env_type}")
+
+
 def test_agent(args):
-    """Test a trained agent"""
+    """Test a trained DQN agent"""
     print(f"🧪 Testing trained agent: {args.model}")
     
     if not os.path.exists(args.model):
         print(f"❌ Model file not found: {args.model}")
         return
     
-    env_config = {
-        "grid_size": args.grid_size,
-        "num_rewards": args.num_rewards,
-        "num_enemies": args.num_enemies,
-        "render_mode": "human" if args.render else None,
-        "fixed_layout": args.fixed_layout
-    }
+    # Create environment
+    env_config = get_env_config(args)
+    env_config["render_mode"] = "human" if args.render else None
     
-    if args.model.endswith('.pkl'):
-        print("Loading Q-Table agent...")
-        agent = QTableAgent()
-    else:
-        print("Loading DQN agent...")
-        state_size = 2 + 2 * args.grid_size * args.grid_size
-        agent = DQNAgent(state_size=state_size)
-    
+    # Create and load agent
+    agent = create_agent(args.env_type, args)
     agent.load(args.model)
     
+    # Evaluate
     avg_reward, success_rate = agent.evaluate(
         env_config=env_config,
         episodes=args.eval_episodes,
@@ -183,78 +205,21 @@ def test_agent(args):
     )
 
 
-def compare_agents(args):
-    """Compare DQN vs Q-Table agents"""
-    print("🔬 Comparing DQN vs Q-Table Agents")
-    print(f"Environment: {args.grid_size}x{args.grid_size} {'Fixed' if args.fixed_layout else 'Random'} Layout")
-    print("=" * 50)
-    
-    env_config = {
-        "grid_size": args.grid_size,
-        "num_rewards": args.num_rewards,
-        "num_enemies": args.num_enemies,
-        "render_mode": None,
-        "fixed_layout": args.fixed_layout
-    }
-    
-    results = {}
-    
-    dqn_model = "models/dqnagent_final.pth"
-    if os.path.exists(dqn_model):
-        print("Testing DQN Agent...")
-        state_size = 2 + 2 * args.grid_size * args.grid_size
-        dqn_agent = DQNAgent(state_size=state_size)
-        dqn_agent.load(dqn_model)
-        dqn_avg, dqn_success = dqn_agent.evaluate(
-            env_config=env_config,
-            episodes=args.eval_episodes, 
-            render=False, 
-            max_steps=args.max_steps
-        )
-        results["DQN"] = {"avg_reward": dqn_avg, "success_rate": dqn_success}
-    
-    qtable_model = "models/qtableagent_final.pkl"
-    if os.path.exists(qtable_model):
-        print("\nTesting Q-Table Agent...")
-        qtable_agent = QTableAgent()
-        qtable_agent.load(qtable_model)
-        qtable_avg, qtable_success = qtable_agent.evaluate(
-            env_config=env_config,
-            episodes=args.eval_episodes, 
-            render=False, 
-            max_steps=args.max_steps
-        )
-        results["Q-Table"] = {"avg_reward": qtable_avg, "success_rate": qtable_success}
-    
-    if results:
-        print("\n" + "="*60)
-        print("COMPARISON RESULTS")
-        print("="*60)
-        
-        for agent_type, result in results.items():
-            print(f"\n{agent_type} Agent:")
-            print(f"  Average Reward: {result['avg_reward']:.2f}")
-            print(f"  Success Rate: {result['success_rate']:.2%}")
-        
-        if len(results) > 1:
-            best_agent = max(results.items(), key=lambda x: x[1]['success_rate'])
-            print(f"\n🏆 Best Agent: {best_agent[0]}")
-            print(f"   Success Rate: {best_agent[1]['success_rate']:.2%}")
-    else:
-        print("❌ No trained models found! Train agents first.")
-
-
 def main():
     """Main function with argument parsing"""
-    parser = argparse.ArgumentParser(description="Grid World RL with DQN and Q-Table")
+    parser = argparse.ArgumentParser(description="Multi-Environment Deep RL Framework")
+    
+    # Add environment type selection
+    parser.add_argument('--env-type', choices=['gridworld'], default='gridworld',
+                       help='Environment type (default: gridworld)')
     
     subparsers = parser.add_subparsers(dest='mode', help='Operation mode')
     
+    # Play mode
     play_parser = subparsers.add_parser('play', help='Human control mode')
     
-    train_parser = subparsers.add_parser('train', help='Train RL agent')
-    train_parser.add_argument('--agent-type', choices=['dqn', 'qtable'], default='qtable', 
-                             help='Type of agent to train (default: qtable for 5x5 grid)')
+    # Train mode
+    train_parser = subparsers.add_parser('train', help='Train DQN agent')
     train_parser.add_argument('--episodes', type=int, default=1000, help='Number of training episodes')
     train_parser.add_argument('--save-interval', type=int, default=200, help='Save model every N episodes')
     train_parser.add_argument('--print-interval', type=int, default=50, help='Print progress every N episodes')
@@ -262,35 +227,36 @@ def main():
     train_parser.add_argument('--evaluate', action='store_true', help='Evaluate after training')
     train_parser.add_argument('--render-eval', action='store_true', help='Render during evaluation')
     
+    # Test mode
     test_parser = subparsers.add_parser('test', help='Test trained agent')
-    test_parser.add_argument('--model', type=str, default='models/qtableagent_final.pkl', 
-                            help='Path to model file (.pth for DQN, .pkl for Q-Table)')
+    test_parser.add_argument('--model', type=str, default='models/gridworld_dqnagent_final.pth', 
+                            help='Path to model file (.pth)')
     test_parser.add_argument('--render', action='store_true', help='Render during testing')
     
-    compare_parser = subparsers.add_parser('compare', help='Compare DQN vs Q-Table agents')
-    
-    for subparser in [play_parser, train_parser, test_parser, compare_parser]:
-        subparser.add_argument('--grid-size', type=int, default=5, help='Grid size (NxN)')
-        subparser.add_argument('--num-rewards', type=int, default=1, help='Number of rewards')
-        subparser.add_argument('--num-enemies', type=int, default=3, help='Number of enemies')
-        subparser.add_argument('--max-steps', type=int, default=75, help='Max steps per episode (5x5x3)')
+    # Add common arguments to all subparsers
+    for subparser in [play_parser, train_parser, test_parser]:
+        subparser.add_argument('--env-type', choices=['gridworld'], default='gridworld',
+                              help='Environment type (default: gridworld)')
         subparser.add_argument('--eval-episodes', type=int, default=10, help='Episodes for evaluation')
+        
+        # GridWorld-specific arguments
+        subparser.add_argument('--grid-size', type=int, default=8, help='Grid size (NxN)')
+        subparser.add_argument('--num-rewards', type=int, default=2, help='Number of rewards')
+        subparser.add_argument('--num-enemies', type=int, default=4, help='Number of enemies')
+        subparser.add_argument('--num-obstacles', type=int, default=8, help='Number of obstacles')
+        subparser.add_argument('--max-steps', type=int, default=192, help='Max steps per episode')
         subparser.add_argument('--fixed-layout', action='store_true', default=True, 
                               help='Use fixed layout (default: True)')
         subparser.add_argument('--random-layout', dest='fixed_layout', action='store_false',
                               help='Use random layout instead of fixed')
-    
-    train_parser.add_argument('--learning-rate', type=float, default=0.1, 
-                             help='Learning rate (0.001 for DQN, 0.1 for Q-Table)')
-    train_parser.add_argument('--gamma', type=float, default=0.99, help='Discount factor')
-    train_parser.add_argument('--epsilon', type=float, default=1.0, help='Initial epsilon')
-    train_parser.add_argument('--epsilon-min', type=float, default=0.01, help='Minimum epsilon')
-    train_parser.add_argument('--epsilon-decay', type=float, default=0.995, help='Epsilon decay rate')
-    
-    train_parser.add_argument('--buffer-size', type=int, default=10000, help='Replay buffer size (DQN only)')
-    train_parser.add_argument('--batch-size', type=int, default=64, help='Batch size for training (DQN only)')
-    train_parser.add_argument('--target-update', type=int, default=100, 
-                             help='Target network update frequency (DQN only)')
+        subparser.add_argument('--learning-rate', type=float, default=0.001, help='Learning rate')
+        subparser.add_argument('--gamma', type=float, default=0.99, help='Discount factor')
+        subparser.add_argument('--epsilon', type=float, default=1.0, help='Initial epsilon')
+        subparser.add_argument('--epsilon-min', type=float, default=0.01, help='Minimum epsilon')
+        subparser.add_argument('--epsilon-decay', type=float, default=0.995, help='Epsilon decay rate')
+        subparser.add_argument('--buffer-size', type=int, default=10000, help='Replay buffer size')
+        subparser.add_argument('--batch-size', type=int, default=64, help='Batch size for training')
+        subparser.add_argument('--target-update', type=int, default=100, help='Target network update frequency')
     
     args = parser.parse_args()
     
@@ -298,16 +264,15 @@ def main():
         parser.print_help()
         return
     
-    print("🎮 Grid World RL with DQN and Q-Table")
+    print("🧠 Multi-Environment Deep RL Framework")
     print("=" * 45)
-    print(f"Default: 5x5 Fixed Layout | 1 Reward | 3 Enemies")
+    print(f"Environment: {args.env_type.upper()}")
+    if args.env_type == "gridworld":
+        print(f"Config: {args.grid_size}x{args.grid_size} {'Fixed' if args.fixed_layout else 'Random'} Layout")
+        print(f"Objects: {args.num_rewards} Rewards | {args.num_enemies} Enemies | {args.num_obstacles} Obstacles")
     print("=" * 45)
     
     os.makedirs("models", exist_ok=True)
-    
-    if hasattr(args, 'agent_type') and args.agent_type == 'dqn' and args.learning_rate == 0.1:
-        args.learning_rate = 0.001
-        print(f"ℹ️  Adjusted learning rate to {args.learning_rate} for DQN agent")
     
     if args.mode == 'play':
         play_human(args)
@@ -315,8 +280,6 @@ def main():
         train_agent(args)
     elif args.mode == 'test':
         test_agent(args)
-    elif args.mode == 'compare':
-        compare_agents(args)
 
 
 if __name__ == "__main__":

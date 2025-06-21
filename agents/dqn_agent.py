@@ -9,21 +9,30 @@ from typing import List, Tuple, Optional, Dict, Any
 from .base_agent import BaseAgent
 
 class DQNNetwork(nn.Module):
-    """Deep Q-Network with improved architecture"""
+    """Deep Q-Network with configurable architecture for different environments"""
     
-    def __init__(self, input_size: int, hidden_size: int = 128, output_size: int = 4):
+    def __init__(self, input_size: int, hidden_sizes: List[int] = [128, 64], output_size: int = 4):
         super(DQNNetwork, self).__init__()
-        self.fc1 = nn.Linear(input_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size // 2)
-        self.fc3 = nn.Linear(hidden_size // 2, output_size)
+        
+        layers = []
+        prev_size = input_size
+        
+        # Create hidden layers
+        for hidden_size in hidden_sizes:
+            layers.append(nn.Linear(prev_size, hidden_size))
+            layers.append(nn.ReLU())
+            prev_size = hidden_size
+        
+        # Output layer
+        layers.append(nn.Linear(prev_size, output_size))
+        
+        self.network = nn.Sequential(*layers)
         
     def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        return self.fc3(x)
+        return self.network(x)
 
 class DQNAgent(BaseAgent):
-    """DQN Agent for Grid World"""
+    """Deep Q-Network Agent for various environments"""
     
     def __init__(self,
                  state_size: int,
@@ -35,22 +44,38 @@ class DQNAgent(BaseAgent):
                  epsilon_decay: float = 0.995,
                  buffer_size: int = 10000,
                  batch_size: int = 64,
-                 target_update: int = 100):
+                 target_update: int = 100,
+                 hidden_sizes: List[int] = [128, 64]):
         
         super().__init__(action_size, lr, gamma, epsilon, epsilon_min, epsilon_decay)
         
         self.state_size = state_size
         self.batch_size = batch_size
         self.target_update = target_update
+        self.hidden_sizes = hidden_sizes
         
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Using device: {self.device}")
         
-        self.q_network = DQNNetwork(state_size, hidden_size=128, output_size=action_size).to(self.device)
-        self.target_network = DQNNetwork(state_size, hidden_size=128, output_size=action_size).to(self.device)
+        # Create networks
+        self.q_network = DQNNetwork(
+            state_size, 
+            hidden_sizes=hidden_sizes, 
+            output_size=action_size
+        ).to(self.device)
+        
+        self.target_network = DQNNetwork(
+            state_size, 
+            hidden_sizes=hidden_sizes, 
+            output_size=action_size
+        ).to(self.device)
+        
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=lr)
         
+        # Initialize target network
         self.update_target_network()
         
+        # Experience replay
         self.memory = deque(maxlen=buffer_size)
         self.step_count = 0
         self.losses = []
@@ -126,67 +151,118 @@ class DQNAgent(BaseAgent):
         return loss_value
     
     def save(self, filepath: str):
-        """Save model"""
+        """Save model with complete state"""
         torch.save({
             'q_network_state_dict': self.q_network.state_dict(),
             'target_network_state_dict': self.target_network.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'epsilon': self.epsilon,
             'step_count': self.step_count,
+            'config': {
+                'state_size': self.state_size,
+                'action_size': self.action_size,
+                'lr': self.lr,
+                'gamma': self.gamma,
+                'epsilon_min': self.epsilon_min,
+                'epsilon_decay': self.epsilon_decay,
+                'hidden_sizes': self.hidden_sizes
+            },
             'metrics': {
                 'episode_rewards': self.episode_rewards,
                 'episode_lengths': self.episode_lengths,
-                'losses': self.losses
+                'losses': self.losses,
+                'training_time': self.training_time
             }
         }, filepath)
     
     def load(self, filepath: str):
-        """Load model"""
+        """Load model with complete state"""
         checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
+        
+        # Load network states
         self.q_network.load_state_dict(checkpoint['q_network_state_dict'])
         self.target_network.load_state_dict(checkpoint['target_network_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        # Load training state
         self.epsilon = checkpoint.get('epsilon', 0.01)
         self.step_count = checkpoint.get('step_count', 0)
         
+        # Load config if available
+        if 'config' in checkpoint:
+            config = checkpoint['config']
+            self.state_size = config.get('state_size', self.state_size)
+            self.action_size = config.get('action_size', self.action_size)
+            self.lr = config.get('lr', self.lr)
+            self.gamma = config.get('gamma', self.gamma)
+            self.epsilon_min = config.get('epsilon_min', self.epsilon_min)
+            self.epsilon_decay = config.get('epsilon_decay', self.epsilon_decay)
+            self.hidden_sizes = config.get('hidden_sizes', self.hidden_sizes)
+        
+        # Load metrics if available
         if 'metrics' in checkpoint:
             metrics = checkpoint['metrics']
             self.episode_rewards = metrics.get('episode_rewards', [])
             self.episode_lengths = metrics.get('episode_lengths', [])
             self.losses = metrics.get('losses', [])
+            self.training_time = metrics.get('training_time', 0)
         
         self.q_network.eval()
+        print(f"Model loaded from {filepath}")
+        print(f"  State size: {self.state_size}")
+        print(f"  Action size: {self.action_size}")
+        print(f"  Architecture: {self.hidden_sizes}")
+        print(f"  Training episodes: {len(self.episode_rewards)}")
     
     def get_stats(self) -> Dict[str, Any]:
         """Get training statistics"""
         return {
             'buffer_size': len(self.memory),
-            'avg_loss': np.mean(self.losses[-100:]) if self.losses else 0.0
+            'avg_loss': np.mean(self.losses[-100:]) if self.losses else 0.0,
+            'step_count': self.step_count
         }
     
     def _plot_agent_specific(self, ax1, ax2):
         """Plot DQN specific metrics"""
+        # Training loss
         if self.losses:
-            ax1.plot(self.losses, alpha=0.6)
+            ax1.plot(self.losses, alpha=0.6, label='Loss')
             if len(self.losses) > 50:
                 window = min(50, len(self.losses) // 10)
                 moving_avg = np.convolve(self.losses, 
                                        np.ones(window)/window, mode='valid')
                 ax1.plot(range(window-1, len(self.losses)), 
-                               moving_avg, 'r-', linewidth=2)
+                        moving_avg, 'r-', linewidth=2, label='Moving Avg')
             ax1.set_title('Training Loss')
             ax1.set_xlabel('Training Step')
             ax1.set_ylabel('Loss')
+            ax1.legend()
             ax1.grid(True)
         
+        # Epsilon decay
         epsilons = []
         for i in range(len(self.episode_rewards)):
             epsilon = max(self.epsilon_min, 
                          1.0 * (self.epsilon_decay ** i))
             epsilons.append(epsilon)
         
-        ax2.plot(epsilons)
-        ax2.set_title('Epsilon Decay')
-        ax2.set_xlabel('Episode')
-        ax2.set_ylabel('Epsilon')
-        ax2.grid(True) 
+        if epsilons:
+            ax2.plot(epsilons, 'g-', linewidth=2)
+            ax2.set_title('Epsilon Decay')
+            ax2.set_xlabel('Episode')
+            ax2.set_ylabel('Epsilon')
+            ax2.grid(True)
+    
+    def get_network_info(self) -> Dict[str, Any]:
+        """Get information about the neural network"""
+        total_params = sum(p.numel() for p in self.q_network.parameters())
+        trainable_params = sum(p.numel() for p in self.q_network.parameters() if p.requires_grad)
+        
+        return {
+            'architecture': self.hidden_sizes,
+            'total_parameters': total_params,
+            'trainable_parameters': trainable_params,
+            'device': str(self.device),
+            'input_size': self.state_size,
+            'output_size': self.action_size
+        } 

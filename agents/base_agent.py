@@ -8,7 +8,7 @@ from environment import GridWorldEnv
 
 
 class BaseAgent(ABC):
-    """Base class for all RL agents with integrated training functionality"""
+    """Base class for all Deep RL agents with integrated training functionality"""
     
     def __init__(self,
                  action_size: int = 4,
@@ -63,7 +63,7 @@ class BaseAgent(ABC):
     def train(self,
               env_config: dict = None,
               episodes: int = 1000,
-              max_steps_per_episode: int = 75,
+              max_steps_per_episode: int = 192,
               save_dir: str = "models",
               save_interval: int = 100,
               print_interval: int = 50) -> Tuple[List[float], List[int]]:
@@ -71,19 +71,21 @@ class BaseAgent(ABC):
         
         if env_config is None:
             env_config = {
-                "grid_size": 5,
-                "num_rewards": 1,
-                "num_enemies": 3,
+                "grid_size": 8,
+                "num_rewards": 2,
+                "num_enemies": 4,
+                "num_obstacles": 8,
                 "render_mode": None,
                 "fixed_layout": True
             }
         
-        env = GridWorldEnv(**env_config)
+        # Create environment based on config
+        env = self._create_environment(env_config)
         
         os.makedirs(save_dir, exist_ok=True)
         
         print(f"Training {self.__class__.__name__} for {episodes} episodes...")
-        print(f"Environment: {env_config['grid_size']}x{env_config['grid_size']} {'Fixed' if env_config.get('fixed_layout', False) else 'Random'} grid")
+        print(f"Environment: {env_config.get('grid_size', 'Unknown')}x{env_config.get('grid_size', 'Unknown')} {'Fixed' if env_config.get('fixed_layout', False) else 'Random'} layout")
         print("-" * 50)
         
         start_time = time.time()
@@ -113,39 +115,44 @@ class BaseAgent(ABC):
                 self._print_progress(episode + 1, episodes, print_interval, time.time() - start_time)
             
             if (episode + 1) % save_interval == 0:
-                filename = f"{self.__class__.__name__.lower()}_episode_{episode + 1}.pkl"
+                env_type = env_config.get('env_type', 'gridworld')
+                filename = f"{env_type}_{self.__class__.__name__.lower()}_episode_{episode + 1}.pth"
                 self.save(os.path.join(save_dir, filename))
         
         self.training_time = time.time() - start_time
         print(f"\nTraining completed! Time: {self.training_time:.1f}s")
         
-        final_filename = f"{self.__class__.__name__.lower()}_final.pkl"
-        if self.__class__.__name__ == "DQNAgent":
-            final_filename = final_filename.replace('.pkl', '.pth')
-        
+        # Save final model
+        env_type = env_config.get('env_type', 'gridworld')
+        final_filename = f"{env_type}_{self.__class__.__name__.lower()}_final.pth"
         self.save(os.path.join(save_dir, final_filename))
         print(f"Model saved: {os.path.join(save_dir, final_filename)}")
         
         env.close()
         return self.episode_rewards, self.episode_lengths
     
+    def _create_environment(self, env_config: dict):
+        """Create environment based on config - can be overridden for different env types"""
+        return GridWorldEnv(**env_config)
+    
     def evaluate(self,
                  env_config: dict = None,
                  episodes: int = 10,
                  render: bool = True,
-                 max_steps: int = 75) -> Tuple[float, float]:
+                 max_steps: int = 192) -> Tuple[float, float]:
         """Evaluate the trained agent"""
         
         if env_config is None:
             env_config = {
-                "grid_size": 5,
-                "num_rewards": 1,
-                "num_enemies": 3,
+                "grid_size": 8,
+                "num_rewards": 2,
+                "num_enemies": 4,
+                "num_obstacles": 8,
                 "render_mode": "human" if render else None,
                 "fixed_layout": True
             }
         
-        env = GridWorldEnv(**env_config)
+        env = self._create_environment(env_config)
         total_rewards = []
         successes = 0
         
@@ -187,6 +194,7 @@ class BaseAgent(ABC):
         """Plot training progress"""
         fig, axes = plt.subplots(2, 2, figsize=(12, 8))
         
+        # Episode rewards
         axes[0, 0].plot(self.episode_rewards, alpha=0.6)
         if len(self.episode_rewards) > 50:
             window = min(50, len(self.episode_rewards) // 10)
@@ -199,6 +207,7 @@ class BaseAgent(ABC):
         axes[0, 0].set_ylabel('Total Reward')
         axes[0, 0].grid(True)
         
+        # Episode lengths
         axes[0, 1].plot(self.episode_lengths, alpha=0.6)
         if len(self.episode_lengths) > 50:
             window = min(50, len(self.episode_lengths) // 10)
@@ -211,6 +220,7 @@ class BaseAgent(ABC):
         axes[0, 1].set_ylabel('Steps')
         axes[0, 1].grid(True)
         
+        # Agent-specific plots
         self._plot_agent_specific(axes[1, 0], axes[1, 1])
         
         plt.tight_layout()
